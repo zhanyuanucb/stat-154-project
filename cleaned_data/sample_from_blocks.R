@@ -66,5 +66,3 @@ m3_train <- m3[train_indices, ]
 annotated_m3 <- rbind.data.frame(m3_test, m3_val) %>% mutate(class_label = c(rep('test', nrow(m3_test)),
                                                                              rep('val', nrow(m3_val))
 ))
-
-m1_train

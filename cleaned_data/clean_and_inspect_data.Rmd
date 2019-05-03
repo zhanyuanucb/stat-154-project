@@ -1,0 +1,110 @@
+---
+title: "clean_data"
+author: "Zhanyuan Zhang"
+date: "May 3, 2019"
+output: html_document
+---
+
+### Method 1: Splitting by blocks
+
+```{r}
+ggplot() +
+  geom_point(data = annotated_m1, aes(x = x, y = y, color = class_label)) +
+  ggtitle("Annotated Image 1 (Random seed = 154)") +
+  geom_point(data = m1, aes(x = x, y = y), color = m1$label + 21, alpha = 0.01) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "class label")
+
+ggplot() +
+  geom_point(data = annotated_m2, aes(x = x, y = y, color = class_label)) +
+  ggtitle("Annotated Image 2 (Random seed = 189)") +
+  geom_point(data = m2, aes(x = x, y = y), color = m2$label + 21, alpha = 0.01) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "class label")
+
+ggplot() +
+  geom_point(data = annotated_m3, aes(x = x, y = y, color = class_label)) +
+  ggtitle("Annotated Image 3 (Random seed = 182)") +
+  geom_point(data = m3, aes(x = x, y = y), color = m3$label + 21, alpha = 0.01) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "class label")
+```
+
+```{r}
+val_data <- rbind.data.frame(m1_val, m2_val, m3_val)
+test_data <- rbind.data.frame(m1_test, m2_test, m3_test)
+train_data <- rbind.data.frame(m1_train, m2_train, m3_train)
+```
+
+Data cleaning for blocking:
+```{r}
+bin_train <- train %>% filter(label != 0)
+bin_val <- val %>% filter(label != 0)
+bin_test <- test %>% filter(label != 0)
+
+train_label <- ifelse(bin_train$label == 1, 1, 0)
+val_label <- ifelse(bin_val$label == 1, 1, 0)
+test_label <- ifelse(bin_test$label == 1, 1, 0)
+
+bin_train <- bin_train %>% mutate(label = train_label)
+bin_val <- bin_val %>% mutate(label = val_label)
+bin_test <- bin_test %>% mutate(label = test_label)
+
+bin_train <- bin_train[, -c(1, 2)]
+bin_val <- bin_val[, -c(1, 2)]
+bin_test <- bin_test[, -c(1, 2)]
+
+# Standardize
+std_train <- data.frame(scale(bin_train)) %>% mutate(label = bin_train$label)
+
+std_val <- data.frame(scale(bin_val)) %>% mutate(label = bin_val$label)
+
+std_test <- data.frame(scale(bin_test)) %>% mutate(label = bin_test$label)
+```
+
+### Method 2: Splitting by blurring the image into larger pixels and then random sampling
+
+```{r}
+ggplot(data = blurred_m1) +
+  geom_point(aes(x = x, y = y, color = label)) +
+  ggtitle("Blurred Image 1") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+ggplot(data = blurred_m2) +
+  geom_point(aes(x = x, y = y, color = label)) +
+  ggtitle("Blurred Image 2") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+ggplot(data = blurred_m3) +
+  geom_point(aes(x = x, y = y, color = label)) +
+  ggtitle("Blurred Image 3") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+```
+
+Data cleaning for blurring:
+```{r}
+set.seed(154)
+blur_concat <- rbind.data.frame(blurred_m1, blurred_m2, blurred_m3)
+blur_concat <- blur_concat[, -12]
+val_test_indices <- sample(1:nrow(blur_concat), round(nrow(blur_concat)*0.2), replace = FALSE)
+val_indices <- val_test_indices[1:round(length(val_test_indices)*0.5)]
+test_indices <- val_test_indices[(round(length(val_test_indices)*0.5) + 1):length(val_test_indices)]
+blur_val <- blur_concat[val_indices, ]
+blur_test <- blur_concat[test_indices, ]
+blur_train <- blur_concat[-c(val_indices, test_indices), ]
+
+bin_blur_val <- blur_val[, -c(1, 2)] %>% filter(label != 0)
+bin_blur_val <- bin_blur_val %>% mutate(label = ifelse(bin_blur_val$label == 1, 1, 0))
+
+bin_blur_test <- blur_test[, -c(1, 2)] %>% filter(label != 0)
+bin_blur_test <- bin_blur_test %>% mutate(label = ifelse(bin_blur_test$label == 1, 1, 0))
+
+bin_blur_train <- blur_train[, -c(1, 2)] %>% filter(label != 0)
+bin_blur_train <- bin_blur_train %>% mutate(label = ifelse(bin_blur_train$label == 1, 1, 0))
+
+std_blur_val <- data.frame(scale(bin_blur_val)) %>% mutate(label = bin_blur_val$label)
+std_blur_test <- data.frame(scale(bin_blur_test)) %>% mutate(label = bin_blur_test$label)
+std_blur_train <- data.frame(scale(bin_blur_train)) %>% mutate(label = bin_blur_train$label)
+```
+

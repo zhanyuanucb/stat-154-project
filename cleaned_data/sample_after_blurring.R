@@ -86,6 +86,6 @@ ggplot(data = cropped_img) +
 
 blurred_m3 <- blur_img(cropped_img)
 
-ggplot(data = blurred_m3) +
-  geom_point(aes(x = x, y = y, color = label)) +
-  ggtitle("blurred m3")
+#ggplot(data = blurred_m3) +
+#  geom_point(aes(x = x, y = y, color = label)) +
+#  ggtitle("blurred m3")
