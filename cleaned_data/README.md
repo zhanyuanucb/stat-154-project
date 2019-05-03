@@ -9,11 +9,11 @@
 
 Results of sampling from blocks:
 
-![](/home/zhanyuan/uc-berkeley/courses/stat-154/stat-154-repo/images/annotated_m1.png)
+![](../images/annotated_m1.png)
 
-![](/home/zhanyuan/uc-berkeley/courses/stat-154/stat-154-repo/images/annotated_m2.png)
+![](../images/annotated_m2.png)
 
-![](/home/zhanyuan/uc-berkeley/courses/stat-154/stat-154-repo/images/annotated_m3.png)
+![](../images/annotated_m3.png)
 
 
 
@@ -26,11 +26,11 @@ Results of sampling from blocks:
 
 Results of blurring images:
 
-![](/home/zhanyuan/uc-berkeley/courses/stat-154/stat-154-repo/images/blurred_m1.png)
+![](../images/blurred_m1.png)
 
-![](/home/zhanyuan/uc-berkeley/courses/stat-154/stat-154-repo/images/blurred_m2.png)
+![](../images/blurred_m2.png)
 
-![](/home/zhanyuan/uc-berkeley/courses/stat-154/stat-154-repo/images/blurred_m3.png)
+![](../images/blurred_m3.png)
 
 ### To inspect the splitting data and blurred images, and further clean the data (standardization and removing unnecessary variables), open *clean_and_inspect_data.Rmd*.
 
