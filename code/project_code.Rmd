@@ -1,0 +1,1259 @@
+---
+title: "proj2-notebook"
+author: "Zhanyuan Zhang"
+date: "April 15, 2019"
+output: html_document
+---
+
+```{r}
+library(glmnet)
+library(ggplot2)
+library(dplyr)
+library(HDCI)
+library(caret)
+library(MASS)
+library(e1071)
+library(glmnet)
+library(tidyr)
+library(ROCR)
+library(randomForest)
+library(purrr)
+library(tidyr)
+library(ggpubr)
+data(ROCR.simple)
+roc_df <- data.frame(ROCR.simple)
+```
+
+```{r}
+# Import data
+m1 <- read.table("image_data/image1.txt", col.names = c('y', 'x', 'label', 'NDAI', 'SD', 'CORR', 'DF', 'CF', 'BF', 'AF', 'AN'))
+m2 <- read.table("image_data/image2.txt", col.names = c('y', 'x', 'label', 'NDAI', 'SD', 'CORR', 'DF', 'CF', 'BF', 'AF', 'AN'))
+m3 <- read.table("image_data/image3.txt", col.names = c('y', 'x', 'label', 'NDAI', 'SD', 'CORR', 'DF', 'CF', 'BF', 'AF', 'AN'))
+```
+
+
+## 1. Data Collection and Exploration
+
+b.
+
+```{r}
+library(dplyr)
+image1 <- m1
+image2 <- m2
+image3 <- m3
+image_combined = rbind(image1, image2, image3)
+
+image1_cleaned = filter(image1, label != 0)
+image2_cleaned = filter(image2, label != 0)
+image3_cleaned = filter(image3, label != 0)
+image_cleaned = filter(image_combined, label != 0)
+```
+
+```{r}
+#image 1
+
+prop.table(table(image1$label))
+
+# #percentages without unlabeled data
+# prop.table(table(image1_cleaned$expert_label))
+```
+
+```{r}
+#image 2
+
+prop.table(table(image2$label))
+
+# #percentages without unlabeled data
+# prop.table(table(image2_cleaned$expert_label))
+```
+
+```{r}
+#image 3
+
+prop.table(table(image3$label))
+
+# #percentages without unlabeled data
+# prop.table(table(image3_cleaned$expert_label))
+```
+
+```{r}
+#combined
+
+prop.table(table(image_combined$label))
+
+# #percentages without unlabeled data
+# prop.table(table(image_cleaned$expert_label))
+```
+
+First, we take a look at the 3 images separately, For image 1, we can see that about 17.77% of the pixels are labeled as "cloud", about 43.78% are "no cloud", and 38.46% are "unlabeled". For image 2, about 34.11% of the pixels are "cloud", 37.25% are "no cloud", and 28.64% are "unlabeled". Lastly, for image 3, about 18.44% are "cloud", 29.29% are "no cloud", and 52.27% are "unlabeled". From the data, we can see that image 1 has clearly more "no cloud" pixels compared to "cloud" pixels, while the other two images are more balanced in proportion of cloudy versus clear pixels. The three images all have fair amount of unlabeled pixels (almost one third and above), with image 3 having the most unlabeled pixels (more than half). These results align with Figure 4 in the report. 
+
+<!-- After combining data from the three images and removing unlabeled data, we can see that about 39% of the pixels are in the "cloud" class, while about 61% of the pixels are in the "no cloud" class. -->
+
+```{r}
+library(ggplot2)
+
+#image 1
+plot1 = ggplot(image1) +
+  geom_point(aes(x = x, y = y, color = label), alpha = 0.7) +
+  ggtitle("Scatterplot of X vs. Y Colored by Label (Image 1)") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+plot1
+
+#image 2
+plot2 = ggplot(image2) +
+  geom_point(aes(x = x, y = y, color = label), alpha = 0.7) +
+  ggtitle("Scatterplot of X vs. Y Colored by Label (Image 2)") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+plot2
+
+#image 3
+plot3 = ggplot(image3) +
+  geom_point(aes(x = x, y = y, color = label), alpha = 0.7) +
+  ggtitle("Scatterplot of X vs. Y Colored by Label (Image 3)") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+plot3
+```
+
+To better understand the spread and dependence of the data, we plotted 3 graphs of x versus y colored by expert label for the 3 images. In the maps above, light blue represents cloud pixels; medium blue represents unlabeled pixels; and dark blue represents clear pixels. From the maps, we can see that there's spatial dependence of the pixels by class as appeared in all three images. The cloudy and clear pixels tend to cluster together instead of spreading out randomly. Thus, the samples would not be justified to have an iid assumption in the dataset. This has implications on how we proceed in data analysis and model training, which will be illustrated later in the next section.
+
+c.
+
+```{r}
+library(corrplot)
+pairs(image1)
+pairs(image2)
+pairs(image3)
+pairs(image_combined)
+
+cor_image1 = cor(image1[, -(1:3)])
+corrplot(cor_image1, method = "color")
+
+cor_image2 = cor(image2[, -(1:3)])
+corrplot(cor_image2, method = "color")
+
+cor_image3 = cor(image3[, -(1:3)])
+corrplot(cor_image3, method = "color")
+
+cor_image_combined = cor(image_combined[, -(1:3)])
+corrplot(cor_image_combined, method = "color")
+
+```
+
+After qualitative and quantitative exploration with plots and correlation computed, we see that for image 1, there's a moderately strong correlation between NDAI and expert label, SD, and different radiance angles (DF, CF, BF, AF, AN). CORR has a moderately strong correlation with BF, AF, AN, but weak correlation with the expert label, NDAI, or SD. The radiance angles (DF, CF, BF, AF, AN) all have a strong correlation with each other. For image 2, there's a moderately strong correlation between NDAI and expert label, SD, CORR, and some radiance angles (BF, AF, AN). CORR has a moderately strong correlation with expert label and NDAI. It also has a strong correlation with BF, AF, and AN. The radiance angles (DF, CF, BF, AF, AN) all have a strong correlation with each other except that DF has a weaker correlation with the rest. For image 3, there's a moderately strong correlation between NDAI and expert label, SD, and CORR. The correlation between these features and the radiance angles, however, is relatively weak. There is a moderately strong to strong correlation among the radiance angles.
+
+```{r}
+cor_image1 = cor(image1[, -(1:2)])[,1][-1]
+cor_image2 = cor(image2[, -(1:2)])[,1][-1]
+cor_image3 = cor(image3[, -(1:2)])[,1][-1]
+cor_combined = cor(image_combined[, -(1:2)])[,1][-1]
+cor_total = rbind(cor_image1, cor_image2, cor_image3, cor_combined)
+
+ggplot(image1_cleaned) +
+  geom_histogram(aes(x = NDAI, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image1_cleaned) +
+  geom_histogram(aes(x = log(SD+1), fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image1_cleaned) +
+  geom_histogram(aes(x = CORR, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = NDAI, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x =SD, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = CORR, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = DF, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = CF, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = BF, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = AF, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+ggplot(image_cleaned) +
+  geom_histogram(aes(x = AN, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+```
+
+```{r}
+image_cleaned0 = filter(image_cleaned, label == -1)[,4:11]
+image_cleaned1 = filter(image_cleaned, label == 1)[,4:11]
+
+abs(mean(image_cleaned0[,2]) - mean(std_train1[,2]))
+
+```
+
+
+### 2. 
+(a). The spatial dependency is obvious among the pixels. To take the spatial dependency into account, one way of sampling is to divide each image horizontally and sample from the resulting stripes, the other way is to divide each image into equal-size blocks and then sample from these blocks. In this project, we decided to divide each image into blocks and then sample from them, since this is more likely be the presenting way of future data. More specifically, we are going to divide an image into 10*10 blocks and then randomly sample 10 bloks for validation, another 10 blocks for testing, and the rest for training.
+
+(b). Split the data:
+
+### Method 1: Splitting by blocks
+
+```{r}
+ggplot() +
+  geom_point(data = annotated_m1, aes(x = x, y = y, color = class_label)) +
+  ggtitle("Annotated Image 1 (Random seed = 154)") +
+  geom_point(data = m1, aes(x = x, y = y), color = m1$label + 21, alpha = 0.01) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "class label")
+
+ggplot() +
+  geom_point(data = annotated_m2, aes(x = x, y = y, color = class_label)) +
+  ggtitle("Annotated Image 2 (Random seed = 189)") +
+  geom_point(data = m2, aes(x = x, y = y), color = m2$label + 21, alpha = 0.01) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "class label")
+
+ggplot() +
+  geom_point(data = annotated_m3, aes(x = x, y = y, color = class_label)) +
+  ggtitle("Annotated Image 3 (Random seed = 182)") +
+  geom_point(data = m3, aes(x = x, y = y), color = m3$label + 21, alpha = 0.01) +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "class label")
+```
+
+### Method 2: Splitting by blurring the image into larger pixels and then random sampling
+
+```{r}
+ggplot(data = blurred_m1) +
+  geom_point(aes(x = x, y = y, color = label)) +
+  ggtitle("Blurred Image 1") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+ggplot(data = blurred_m2) +
+  geom_point(aes(x = x, y = y, color = label)) +
+  ggtitle("Blurred Image 2") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+ggplot(data = blurred_m3) +
+  geom_point(aes(x = x, y = y, color = label)) +
+  ggtitle("Blurred Image 3") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(color = "expert label")
+```
+
+```{r}
+val_data <- rbind.data.frame(m1_val, m2_val, m3_val)
+test_data <- rbind.data.frame(m1_test, m2_test, m3_test)
+train_data <- rbind.data.frame(m1_train, m2_train, m3_train)
+```
+
+Data cleaning for blocking:
+```{r}
+bin_train <- train %>% filter(label != 0)
+bin_val <- val %>% filter(label != 0)
+bin_test <- test %>% filter(label != 0)
+
+train_label <- ifelse(bin_train$label == 1, 1, 0)
+val_label <- ifelse(bin_val$label == 1, 1, 0)
+test_label <- ifelse(bin_test$label == 1, 1, 0)
+
+bin_train <- bin_train %>% mutate(label = train_label)
+bin_val <- bin_val %>% mutate(label = val_label)
+bin_test <- bin_test %>% mutate(label = test_label)
+
+bin_train <- bin_train[, -c(1, 2)]
+bin_val <- bin_val[, -c(1, 2)]
+bin_test <- bin_test[, -c(1, 2)]
+
+# Standardize
+std_train <- data.frame(scale(bin_train)) %>% mutate(label = bin_train$label)
+
+std_val <- data.frame(scale(bin_val)) %>% mutate(label = bin_val$label)
+
+std_test <- data.frame(scale(bin_test)) %>% mutate(label = bin_test$label)
+```
+
+Data cleaning for blurring:
+```{r}
+set.seed(154)
+blur_concat <- rbind.data.frame(blurred_m1, blurred_m2, blurred_m3)
+blur_concat <- blur_concat[, -12]
+val_test_indices <- sample(1:nrow(blur_concat), round(nrow(blur_concat)*0.2), replace = FALSE)
+val_indices <- val_test_indices[1:round(length(val_test_indices)*0.5)]
+test_indices <- val_test_indices[(round(length(val_test_indices)*0.5) + 1):length(val_test_indices)]
+blur_val <- blur_concat[val_indices, ]
+blur_test <- blur_concat[test_indices, ]
+blur_train <- blur_concat[-c(val_indices, test_indices), ]
+
+bin_blur_val <- blur_val[, -c(1, 2)] %>% filter(label != 0)
+bin_blur_val <- bin_blur_val %>% mutate(label = ifelse(bin_blur_val$label == 1, 1, 0))
+
+bin_blur_test <- blur_test[, -c(1, 2)] %>% filter(label != 0)
+bin_blur_test <- bin_blur_test %>% mutate(label = ifelse(bin_blur_test$label == 1, 1, 0))
+
+bin_blur_train <- blur_train[, -c(1, 2)] %>% filter(label != 0)
+bin_blur_train <- bin_blur_train %>% mutate(label = ifelse(bin_blur_train$label == 1, 1, 0))
+
+std_blur_val <- data.frame(scale(bin_blur_val)) %>% mutate(label = bin_blur_val$label)
+std_blur_test <- data.frame(scale(bin_blur_test)) %>% mutate(label = bin_blur_test$label)
+std_blur_train <- data.frame(scale(bin_blur_train)) %>% mutate(label = bin_blur_train$label)
+```
+
+# Baseline - Trivial classifier
+```{r}
+print(nrow(std_val %>% filter(label == 0)) / nrow(std_val))
+print(nrow(std_test %>% filter(label == 0)) / nrow(std_test))
+```
+
+# First Order Importance
+```{r}
+data.frame(std_train[, -1]) %>% 
+  dplyr::select(NDAI:CORR) %>%
+  gather(Variable, Value) %>% 
+  ggplot(aes(x=Value, fill=Variable)) +
+      geom_density(alpha=0.5) +
+      theme_bw() +
+      scale_fill_brewer(palette="Spectral")
+```
+
+```{r}
+data.frame(std_train[, -1]) %>% 
+  dplyr::select(DF:AN) %>%
+  gather(Variable, Value) %>% 
+  ggplot(aes(x=Value, fill=Variable)) +
+      geom_density(alpha=0.5) +
+      theme_bw() +
+      scale_fill_brewer(palette="Spectral")
+```
+
+```{r}
+library(dplyr)
+std_train0 = filter(std_train, label == 0)
+std_train1 = filter(std_train, label == 1)
+
+cor = abs(cor(std_train$label, std_train[, -1]))
+names = colnames(cor)
+cor = data.frame(as.numeric(cor), names)
+colnames(cor) = c("correlation" , "features")
+ggplot(cor, aes(x = reorder(features, -correlation), y = correlation)) +
+  geom_bar(stat = "identity") +
+  xlab("features") +
+  ggtitle("Absolute Correlation between Label and Features in Training Set") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# NDAI as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, NDAI < i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, NDAI > i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_NDAI = 1-min(error)
+accuracy_NDAI
+ggplot(std_train) +
+  geom_histogram(aes(x = NDAI, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label") +
+  geom_vline(xintercept = cutoff) +
+  annotate("text", x = 0.6, y = 500, label = "cutoff = 0.21") +
+  ggtitle("Histogram of NDAI by Expert Labels with Cutoff") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# CORR as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, CORR < i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, CORR > i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_CORR = 1-min(error)
+accuracy_CORR
+ggplot(std_train) +
+  geom_histogram(aes(x = CORR, fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label") +
+  geom_vline(xintercept = cutoff) +
+  annotate("text", x = 1.5, y = 1000, label = "cutoff = 0.07")
+
+# SD as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, SD < i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, SD > i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_SD = 1-min(error)
+accuracy_SD
+
+# DF as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, DF > i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, DF < i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_DF = 1-min(error)
+accuracy_DF
+
+# CF as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, CF > i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, CF < i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_CF = 1-min(error)
+accuracy_CF
+
+# BF as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, BF > i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, BF < i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_BF = 1-min(error)
+accuracy_BF
+
+# AF as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, AF > i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, AF < i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_AF = 1-min(error)
+accuracy_AF
+
+# AN as classifier
+error = c()
+for (i in seq(-1, 2, by = 0.01)) {
+  error_FN = nrow(filter(std_train1, AN > i)) / nrow(std_train)
+  error_FP = nrow(filter(std_train0, AN < i)) / nrow(std_train)
+  error = c(error, error_FN + error_FP)
+}
+cutoff = -1 + (which.min(error)-1) * 0.01
+cutoff
+accuracy_AN = 1-min(error)
+accuracy_AN
+
+accuracy_features = data.frame(accuracy_NDAI, accuracy_CORR, accuracy_SD, accuracy_DF, accuracy_CF, accuracy_BF, accuracy_AF, accuracy_AN)
+accuracy_features = sort(accuracy_features, decreasing = T)
+
+ggplot(std_train) +
+  geom_histogram(aes(x = log(SD+1), fill = factor(label)), alpha = 0.7) +
+  labs(fill = "expert label")
+
+mean_difference = c()
+for (i in 2:9) {
+  abs_diff = abs(mean(std_train0[,i]) - mean(std_train1[,i]))
+  mean_difference = c(mean_difference, abs_diff)
+}
+mean_difference = data.frame(c('NDAI', 'SD', 'CORR', 'DF', 'CF', 'BF', 'AF', 'AN'), mean_difference)
+colnames(mean_difference) = c("Feature", "Absolute Mean Difference (Standardized)")
+mean_difference = arrange(mean_difference, desc(`Absolute Mean Difference (Standardized)`))
+mean_difference
+
+# variance
+pca = prcomp(std_train[,-1], retx = T)
+
+cor_features = cor(std_train[, -1])
+corrplot(cor_features, method = "color")
+```
+
+
+## CV Generic Function
+
+```{r}
+get_logit_pred <- function(clf, data, thresh=0.5) {
+  ifelse(1 / (1 + exp(-predict(clf, data))) >= thresh, 1, 0)
+}
+
+CVgeneric <- function(train_x, train_y, k, loss_fn, model, thresh=0.5, mtry = 7, nodesize=50, ntree=10) {
+  flds = createFolds(1:nrow(train_x), k = k)
+  avg_acc = c()
+  for (i in 1:k) {
+    cv_train = data.frame()
+    for (j in 1:(k-1)) {
+      cv_train = rbind.data.frame(cv_train, train_x[flds[[j]], ])
+    }
+    cv_val = train_x[flds[[i]], ]
+    cv_val_label = train_y[flds[[i]]]
+    if (model == 'lda') {
+      clf = lda(label ~ ., data = cv_train)
+    } else if (model == 'qda') {
+      clf = qda(label ~ ., data = cv_train)
+    } else if (model == 'logit') {
+      clf = glm(label ~ ., data = cv_train, family = binomial(link = "logit"))
+      
+      y_hat = get_logit_pred(clf, cv_val, thresh = thresh)
+      temp = loss_fn(cv_val_label, y_hat)
+      
+      avg_acc = c(avg_acc, temp)
+    } else if (model == "rf") { #randomForest(size_train[, -1], factor(size_train[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+      clf = randomForest(train_x[, -1], factor(train_x[, 1]), mtry = mtry, nodesize = nodesize, ntree = ntree)
+      
+      temp = loss_fn(cv_val_label, predict(clf, cv_val))
+      avg_acc = c(avg_acc, temp)
+    }
+    if (model != "logit" && model != "rf") {
+      y_hat = predict(clf, cv_val)$class
+      temp = loss_fn(cv_val_label, y_hat)
+      
+      avg_acc = c(avg_acc, temp)
+    }
+  }
+  return(list(cv_acc = avg_acc, error_rate = 1 - avg_acc))
+}
+
+
+loss_fn <- function(train_y, y_hat) return(sum(train_y == y_hat) / length(y_hat))
+```
+
+# Model
+
+## CV for Method 1
+
+## LDA (non-standardized data)
+```{r}
+CVgeneric(rbind.data.frame(bin_train, bin_val), c(bin_train$label, bin_val$label), 10, loss_fn, 'lda')
+```
+
+## QDA (non-standardized data)
+```{r}
+CVgeneric(rbind.data.frame(bin_train, bin_val), c(bin_train$label, bin_val$label), 10, loss_fn, 'qda')
+```
+
+## Logistic Regression (non-standardized data)
+```{r}
+CVgeneric(rbind.data.frame(bin_train, bin_val), c(bin_train$label, bin_val$label), 10, loss_fn, 'logit')
+```
+
+```{r}
+CVgeneric(rbind.data.frame(bin_train[, -(5:9)], bin_val[, -(5:9)]), c(bin_train$label, bin_val$label), 10, loss_fn, 'logit')
+```
+
+```{r}
+CVgeneric(rbind.data.frame(bin_train[, -(2:4)], bin_val[, -(2:4)]), c(bin_train$label, bin_val$label), 10, loss_fn, 'logit')
+```
+
+## LDA (standardized data)
+```{r}
+CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'lda')
+```
+
+## QDA (standardized data)
+```{r}
+CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'qda')
+```
+
+## Random forest (standardized data)
+```{r}
+CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'rf')
+```
+
+## Logistic Regression (standardized data)
+```{r}
+#for (thresh in seq(0.45, 1, 0.01)) {
+#  CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'logit', thresh)
+#}
+cv_scores <- c()
+for (thresh in c(0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75)) {
+  print(thresh)
+  cv_list <- CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'logit', thresh)
+  print(cv_list)
+  cv_scores <- c(cv_scores, mean(cv_list))
+  print(cv_scores)
+  print("**********")
+}
+#CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'logit', 0.5)
+cv_scores
+```
+
+```{r}
+sum(predict(forest.model, std_val) == std_val$label) / nrow(std_val)
+```
+
+```{r}
+forest.model$confusion
+```
+
+## test accuracy
+```{r}
+lda.model <- lda(label~., data = rbind.data.frame(std_train, std_val))
+qda.model <- qda(label~., data = rbind.data.frame(std_train, std_val))
+logit.model <- glm(label ~ ., data = rbind.data.frame(std_train, std_val), family = binomial(link = "logit"))
+rf.model <- randomForest(rbind.data.frame(std_train, std_val)[, -1], factor(rbind.data.frame(std_train, std_val)[, 1]), mtry = 7, nodesize = 500, ntree = 10)
+```
+
+```{r}
+lda.pred <- predict(lda.model, std_test)
+qda.pred <- predict(qda.model, std_test)
+logit_pred <- get_logit_pred(logit.model, std_test, 0.4)
+rf.pred <- predict(rf.model, std_test)
+```
+
+```{r}
+lda.acc <- loss_fn(lda.pred$class, std_test$label)
+qda.acc <- loss_fn(qda.pred$class, std_test$label)
+logit.acc <- loss_fn(logit_pred, std_test$label)
+rf.acc <- loss_fn(rf.pred, std_test$label)
+
+test_acc_blocks = data.frame(lda.acc, qda.acc, logit.acc, rf.acc)
+```
+
+## CV for Method 2
+
+## LDA (non-standardized data)
+```{r}
+CVgeneric(rbind.data.frame(bin_blur_train, bin_blur_val), c(bin_blur_train$label, bin_blur_val$label), 10, loss_fn, 'lda')
+```
+
+## QDA (non-standardized data)
+```{r}
+CVgeneric(rbind.data.frame(bin_blur_train, bin_blur_val), c(bin_blur_train$label, bin_blur_val$label), 10, loss_fn, 'qda')
+```
+
+## Logistic Regression (non-standardized data)
+```{r}
+CVgeneric(rbind.data.frame(bin_blur_train, bin_blur_val), c(bin_blur_train$label, bin_blur_val$label), 10, loss_fn, 'logit')
+```
+
+## LDA (standardized data)
+```{r}
+CVgeneric(rbind.data.frame(std_blur_train, std_blur_val), c(std_blur_train$label, std_blur_val$label), 10, loss_fn, 'lda')
+```
+
+## QDA (standardized data)
+```{r}
+CVgeneric(rbind.data.frame(std_blur_train, std_blur_val), c(std_blur_train$label, std_blur_val$label), 10, loss_fn, 'qda')
+```
+
+## Logistic Regression (standardized data)
+```{r}
+#for (thresh in seq(0.45, 1, 0.01)) {
+#  CVgeneric(rbind.data.frame(std_train, std_val), c(std_train$label, std_val$label), 10, loss_fn, 'logit', thresh)
+#}
+
+cv_scores <- c()
+for (thresh in c(0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75)) {
+  print(thresh)
+  cv_list <- CVgeneric(rbind.data.frame(std_blur_train, std_blur_val), c(std_blur_train$label, std_blur_val$label), 10, loss_fn, 'logit', thresh)
+  print(cv_list)
+  cv_scores <- c(cv_scores, mean(cv_list))
+  print(cv_scores)
+  print("**********")
+}
+which.max(cv_scores)
+
+#CVgeneric(rbind.data.frame(std_blur_train, std_blur_val), c(std_blur_train$label, std_blur_val$label), 10, loss_fn, 'logit', 0.4)
+```
+
+## Random Forest (standardized data)
+```{r}
+# 10, 20 <- 0.912 # mtry = 7, nodesize=50, ntree=10) 
+bin_blur_comb <- rbind.data.frame(bin_blur_train, bin_blur_val)
+forest.avg_acc <- c()
+for (i in 5:8) {
+  for (j in c(5, 50, 500)) {
+    for (q in c(10, 20, 30)) {
+      print(c(i, j, q))
+      temp <- CVgeneric(bin_blur_comb, bin_blur_comb$label, 10, loss_fn, model = "rf",  i, j, q)
+      forest.avg_acc <- c(forest.avg_acc, mean(temp)) 
+      print(mean(temp))
+    }
+  }
+}
+#forest.model <- randomForest(factor(label) ~., data = std_train, maxnodes=10, ntree = 20)
+max(forest.avg_acc)
+```
+
+```{r}
+best_mtry = 7
+best_nodesize = 500
+best_ntree = 10
+```
+
+```{r}
+CVgeneric(bin_blur_comb, bin_blur_comb$label, 10, loss_fn, model = "rf",  7, 500, 10)
+```
+
+```{r}
+which.max(forest.avg_acc)
+```
+
+```{r}
+sum(predict(forest.model, std_blur_val) == std_blur_val$label) / nrow(std_blur_val)
+```
+
+```{r}
+forest.model$confusion
+```
+
+## test accuracy
+```{r}
+lda.model <- lda(label~., data = rbind.data.frame(std_blur_train, std_blur_val))
+qda.model <- qda(label~., data = rbind.data.frame(std_blur_train, std_blur_val))
+logit.model <- glm(label ~ ., data = rbind.data.frame(std_blur_train, std_blur_val), family = binomial(link = "logit"))
+rf.model <- randomForest(rbind.data.frame(std_blur_train, std_blur_val)[, -1], factor(rbind.data.frame(std_blur_train, std_blur_val)[, 1]), mtry = 7, nodesize = 500, ntree = 10)
+```
+
+```{r}
+lda.pred <- predict(lda.model, std_blur_test)
+qda.pred <- predict(qda.model, std_blur_test)
+logit_pred <- get_logit_pred(logit.model, std_blur_test, 0.4)
+rf.pred <- predict(rf.model, std_blur_test)
+```
+
+```{r}
+lda.acc <- loss_fn(lda.pred$class, std_blur_test$label)
+qda.acc <- loss_fn(qda.pred$class, std_blur_test$label)
+logit.acc <- loss_fn(logit_pred, std_blur_test$label)
+rf.acc <- loss_fn(rf.pred, std_blur_test$label)
+
+test_acc_blur = data.frame(lda.acc, qda.acc, logit.acc, rf.acc)
+```
+
+# ROC curve for Parameter Tuning
+
+## LDA
+```{r}
+lda.model <- lda(label ~., data = std_blur_train)
+lda.pred <- predict(lda.model, std_blur_val)
+pred = prediction(lda.pred$posterior[, 2], std_blur_val$label)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+points(x = 1-0.8833819, y = 0.9468927, pch = 15, col = "red")
+abline(h = 0.9468927, v = 1-0.8833819, col = "grey", lty = 2)
+text(x = 0.25, y = 0.82, labels = "Cutoff Value = 0.28")
+title('ROC curve of LDA')
+```
+
+```{r}
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+print(opt.cut(perf, pred))
+```
+
+
+## QDA
+```{r}
+qda.model <- qda(label ~., data = std_blur_train)
+qda.pred <- predict(qda.model, std_blur_val)
+pred = prediction(qda.pred$posterior[, 2], std_blur_val$label)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+points(x = 1-0.91034985, y = 0.95932203, pch = 15, col = "red")
+abline(h = 0.95932203, v = 1-0.91034985, col = "grey", lty = 2)
+text(x = 0.25, y = 0.87, labels = "Cutoff Value = 0.07")
+title('ROC curve of QDA')
+```
+
+```{r}
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+print(opt.cut(perf, pred))
+```
+
+
+## Logitsitc regression
+```{r}
+logit.model <- glm(label ~ ., data = std_blur_train, family = binomial(link = "logit"))
+logit_pred <- 1/(1 + exp(-predict(logit.model, std_blur_val)))
+pred = prediction(logit_pred, std_blur_val$label)
+perf <- performance(pred,"tpr","fpr")
+plot(perf,colorize=TRUE)
+points(x = 1-0.8906706, y = 0.9322034, pch = 15, col = "red")
+abline(h = 0.9322034, v = 1-0.8906706, col = "grey", lty = 2)
+text(x = 0.25, y = 0.82, labels = "Cutoff Value = 0.36")
+title('ROC curve of logistic regression')
+```
+
+```{r}
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+print(opt.cut(perf, pred))
+```
+
+## Random Forest
+```{r}
+set.seed(123)
+rf.model <- randomForest(factor(label) ~., data = std_blur_train, maxnodes=100, ntree=10)
+rf.pred <- as.data.frame(predict(rf.model, std_blur_val, type="prob"))
+pred <- prediction(rf.pred$`1`, std_blur_val$label)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+points(x = 1-0.9336735, y = 0.9627119, pch = 15, col = "red")
+abline(h = 0.9627119, v = 1-0.9336735, col = "grey", lty = 2)
+text(x = 0.25, y = 0.82, labels = "Cutoff Value = 0.6")
+title('ROC curve of random forest')
+```
+
+```{r}
+opt.cut = function(perf, pred){
+    cut.ind = mapply(FUN=function(x, y, p){
+        d = (x - 0)^2 + (y-1)^2
+        ind = which(d == min(d))
+        c(sensitivity = y[[ind]], specificity = 1-x[[ind]], 
+            cutoff = p[[ind]])
+    }, perf@x.values, perf@y.values, pred@cutoffs)
+}
+
+print(opt.cut(perf, pred))
+```
+
+
+
+# ROC Curve Comparing Models
+
+```{r}
+std_combined = rbind(std_blur_train, std_blur_val)
+```
+
+
+## LDA
+```{r}
+lda.model <- lda(label ~., data = std_combined)
+lda.pred <- predict(lda.model, std_blur_test)
+pred = prediction(lda.pred$posterior[, 2], std_blur_test$label)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+title('ROC curve of LDA')
+
+perf <- performance(pred, measure = "auc")
+AUC_lda = perf@y.values[[1]]
+```
+
+
+## QDA
+```{r}
+qda.model <- qda(label ~., data = std_combined)
+qda.pred <- predict(qda.model, std_blur_test)
+pred = prediction(qda.pred$posterior[, 2], std_blur_test$label)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+title('ROC curve of QDA')
+
+perf <- performance(pred, measure = "auc")
+AUC_qda = perf@y.values[[1]]
+```
+
+
+## Logitsitc regression
+```{r}
+logit.model <- glm(label ~ ., data = std_combined, family = binomial(link = "logit"))
+logit_pred <- 1/(1 + exp(-predict(logit.model, std_blur_test)))
+pred = prediction(logit_pred, std_blur_test$label)
+perf <- performance(pred,"tpr","fpr")
+plot(perf,colorize=TRUE)
+title('ROC curve of logistic regression')
+
+perf <- performance(pred, measure = "auc")
+AUC_logit = perf@y.values[[1]]
+```
+
+## Random Forest
+```{r}
+set.seed(123)
+rf.model <- randomForest(factor(label) ~., data = std_combinded, maxnodes=100, ntree=10)
+rf.pred <- as.data.frame(predict(rf.model, std_blur_test, type="prob"))
+pred <- prediction(rf.pred$`1`, std_blur_test$label)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+title('ROC curve of random forest')
+
+perf <- performance(pred, measure = "auc")
+AUC_rf = perf@y.values[[1]]
+```
+
+```{r}
+auc = data.frame(AUC_lda, AUC_qda, AUC_logit, AUC_rf)
+```
+
+
+# Other Metrics
+```{r}
+cm_lda = confusionMatrix(lda.pred$class, factor(std_blur_test$label), positive = "1") 
+cm_lda$byClass
+
+cm_qda = confusionMatrix(qda.pred$class, factor(std_blur_test$label), positive = "1")
+cm_qda$byClass
+
+logit_pred <- get_logit_pred(logit.model, std_blur_test)
+cm_logit = confusionMatrix(factor(logit_pred), factor(std_blur_test$label), positive = "1") 
+cm_logit$byClass
+
+rf.pred = predict(rf.model, std_blur_test)
+cm_rf = confusionMatrix(factor(rf.pred), factor(std_blur_test$label), positive = "1") 
+cm_rf$byClass
+
+values = data.frame(cm_lda$byClass, cm_qda$byClass, cm_logit$byClass, cm_rf$byClass)
+colnames(values) = c("LDA", "QDA", "Logistic Regression", "Random Forest")
+```
+
+AIC
+```{r}
+library(mvtnorm)
+
+input_labels = std_blur_train$label
+mean_0 = colMeans(filter(std_blur_train[, -1], input_labels == 0))
+mean_1 = colMeans(filter(std_blur_train[, -1], input_labels == 1))
+mean = list(mean_0, mean_1)
+
+lam = 1e-5
+cov_0 = cov(filter(std_blur_train[, -1], input_labels == 0)) + lam * diag(nrow = 8) 
+cov_1 = cov(filter(std_blur_train[, -1], input_labels == 1)) + lam * diag(nrow = 8)
+cov = list(cov_0, cov_1)
+n0 = nrow(filter(std_blur_train[, -1], input_labels == 0))
+n1 = nrow(filter(std_blur_train[, -1], input_labels == 1))
+cov_lda = ((n0-1)*cov_0 + (n1-1)*cov_1)/(n0-1+n1-1)
+
+# QDA
+input_0 = filter(std_blur_train, std_blur_train$label == 0)
+input_0 = input_0[,-1]
+loglik_0 = sum(dmvnorm(input_0, mean = as.numeric(unlist(mean[1])), sigma = matrix(unlist(cov[1]), nrow = 8), log = T))
+
+input_1 = filter(std_blur_train, std_blur_train$label == 1)
+input_1 = input_0[,-1]
+loglik_1 = sum(dmvnorm(input_0, mean = as.numeric(unlist(mean[2])), sigma = matrix(unlist(cov[2]), nrow = 8), log = T))
+
+loglik_qda = loglik_0 + loglik_1
+
+k = 2*(8*8/2+8)
+AIC_qda = 2 * k - 2 * loglik_qda
+
+# LDA
+input_0 = filter(std_blur_train, std_blur_train$label == 0)
+input_0 = input_0[,-1]
+loglik_0 = sum(dmvnorm(input_0, mean = as.numeric(unlist(mean[1])), sigma = matrix(unlist(cov_lda), nrow = 8), log = T))
+
+input_1 = filter(std_blur_train, std_blur_train$label == 1)
+input_1 = input_0[,-1]
+loglik_1 = sum(dmvnorm(input_0, mean = as.numeric(unlist(mean[2])), sigma = matrix(unlist(cov_lda), nrow = 8), log = T))
+
+loglik_lda = loglik_0 + loglik_1
+AIC_lda = 2 * k - 2 * loglik_lda
+
+#Logistic
+AIC_logistic = logit.model$aic
+
+AIC = data.frame(AIC_lda, AIC_qda, AIC_logistic)
+```
+
+BIC
+```{r}
+n = as.numeric(count(std_blur_train)[1])
+BIC_qda = log(n)* k - 2 * loglik_qda
+BIC_lda = log(n)* k - 2 * loglik_lda
+BIC_logistic = BIC(logit.model)
+
+BIC = data.frame(BIC_lda, BIC_qda, BIC_logistic)
+```
+
+
+#4. Diagnostics
+
+For this part, we focus on analyzing the random forest model containing 10 trees, with 7 sampled features and minimal node size of 50 in each tree. Cross-validation gave these optimal hyperparameters.
+
+## (a) Robustness of random forest model
+```{r}
+bin_blur_comb <- rbind.data.frame(bin_blur_train, bin_blur_val)
+sizes <- round(nrow(bin_blur_comb)*0.1*(1:10))
+
+size_test_acc <- c()
+for (s in sizes) {
+  size_train <- bin_blur_comb[c(1:s), ]
+  size_rf <- randomForest(size_train[, -1], factor(size_train[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+  pred <- predict(size_rf, bin_test[, -1])
+  size_test_acc <- c(size_test_acc, sum(pred == bin_test$label) / nrow(bin_test))
+}
+
+plot(x = sizes, y = size_test_acc, type="l",
+     xlab = "training size",
+     ylab = "test accuracy of random forest")
+title("Random Forest: Test accuracy VS training size.")
+```
+
+### The testing accuracy converges after choosing more than 17,000 samples, so we bootstrapped 17,000 samples 100 times to see how robust the random forest model is.
+```{r}
+boot_acc_list <- c()
+for (i in 1:100) {
+  sample_indices <- sample(1:nrow(bin_blur_comb), size = 17000, replace = FALSE)
+  sample_training <- bin_blur_comb[sample_indices, ]
+  boot_rf <- randomForest(sample_training[, -1], factor(sample_training[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+  pred <- predict(boot_rf, bin_test[, -1])
+  boot_acc_list <- c(boot_acc_list, sum(pred == bin_test$label) / nrow(bin_test))
+}
+
+plot(x = 1:100, y = boot_acc_list, type="l",
+     xlab = "Subset",
+     ylab = "test accuracy of random forest")
+abline(h = mean(boot_acc_list), col="red")
+title("Random Forest: Test accuracy VS bootstrapped training subsets.")
+summary(boot_acc_list)
+var(boot_acc_list)
+```
+#### Comment: The testing accuracy of bootstrapping has small variance, which implies that the model is robust to the training samples.
+
+
+## (b) Patterns of misclassification
+```{r}
+rf.model <-randomForest(bin_blur_comb[, -1], factor(bin_blur_comb[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+pred <- predict(rf.model, bin_test[, -1])
+wrong_class_indices <- (1:nrow(bin_test))[pred != bin_test[, 1]]
+wrong_class <- bin_test[wrong_class_indices, ]
+correct_class <- bin_test[-wrong_class_indices, ]
+```
+
+### Confusion matrix
+```{r}
+confusionMatrix(factor(pred), factor(bin_test[, 1]))
+```
+
+#### Comment: The model misclassified around 9% of the "not cloud" samples and around 7% of the "cloud" samples.
+
+```{r}
+NDAI.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(NDAI, fill = is_wrong), alpha = 0.5)
+
+SD.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(SD, fill = is_wrong), alpha = 0.5)
+
+CORR.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(CORR, fill = is_wrong), alpha = 0.5)
+
+DF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(DF, fill = is_wrong), alpha = 0.5)
+
+CF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(CF, fill = is_wrong), alpha = 0.5)
+
+BF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(BF, fill = is_wrong), alpha = 0.5)
+
+AF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(AF, fill = is_wrong), alpha = 0.5)
+
+AN.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(AN, fill = is_wrong), alpha = 0.5)
+```
+
+```{r}
+ggarrange(NDAI.plot, SD.plot, CORR.plot, DF.plot, CF.plot, BF.plot, AF.plot, AN.plot, nrow = 4, ncol = 2)
+```
+
+### For those correctly classified samples, most of their variables present bimodal distributions. Meanwhile, given a variable of misclassified sample (like NDAI, CF or AN), it usually concentrates on one of the two peaks. These density plots tell us that the random forest model tend to misclassified those samples having relatively higher NDAI, or lower DF, CF, BF, AF, and AN.
+
+```{r}
+summary(bin_test_wrong_indicate %>% filter(is_wrong == TRUE))
+```
+
+```{r}
+summary(bin_test_wrong_indicate %>% filter(is_wrong == FALSE))
+```
+
+## (c) Better classifier
+
+### Including PC features
+```{r}
+blur_comb_matrix <- as.matrix(bin_blur_comb[, -1], ncol = 9)
+blur_comb.pca <- prcomp(blur_comb_matrix, retx = TRUE, center = TRUE, scale. = TRUE)
+(blur_comb.pca$sdev) / sum(blur_comb.pca$sdev)
+
+blur_test.pca <- prcomp(bin_blur_test, retx = TRUE, center = TRUE, scale. = TRUE)
+```
+#### Comment: First 3 PC contain explain 99% of the data, so we pick the first three PC's and add them as new features.
+
+```{r}
+blur_comb_pca3 <- blur_comb.pca$x[, 1:3]
+bin_blur_pca <- cbind.data.frame(bin_blur_comb, blur_comb_pca3)
+bin_test_pca <- cbind.data.frame(bin_blur_test, blur_test.pca$x[, 1:3])
+CVgeneric(bin_blur_pca, bin_blur_comb$label, 10, loss_fn, 'rf')
+```
+
+### Again, see how does the random forest converge on new features and then test its robustness
+```{r}
+sizes <- round(nrow(bin_blur_pca)*0.1*(1:10))
+
+size_test_acc <- c()
+for (s in sizes) {
+  size_train <- bin_blur_pca[c(1:s), ]
+  size_rf <- randomForest(size_train[, -1], factor(size_train[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+  pred <- predict(size_rf, bin_test_pca[, -1])
+  size_test_acc <- c(size_test_acc, sum(pred == bin_test_pca$label) / nrow(bin_test_pca))
+}
+
+plot(x = sizes, y = size_test_acc, type="l",
+     xlab = "training size",
+     ylab = "test accuracy of random forest")
+abline
+title("Random Forest: Test accuracy VS training size.")
+```
+#### Comment: The testing accuracy start converging after 16,000, so we bootstrap 16,000 samples 100 times to test the robustness of the model.
+```{r}
+pca_boot_acc_list <- c()
+for (i in 1:100) {
+  sample_indices <- sample(1:nrow(bin_blur_pca), size = 16000, replace = FALSE)
+  sample_training <- bin_blur_pca[sample_indices, ]
+  boot_rf <- randomForest(sample_training[, -1], factor(sample_training[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+  pred <- predict(boot_rf, bin_test_pca[, -1])
+  pca_boot_acc_list <- c(pca_boot_acc_list, sum(pred == bin_test_pca$label) / nrow(bin_test_pca))
+}
+
+plot(x = 1:100, y = pca_boot_acc_list, type="l",
+     xlab = "Subset",
+     ylab = "test accuracy of random forest")
+abline(h = mean(boot_acc_list), col="red")
+title("Random Forest: Test accuracy VS bootstrapped training subsets.")
+summary(pca_boot_acc_list)
+var(pca_boot_acc_list)
+```
+
+
+#### Comment: Overall, adding new features helps increases the accuracy of the model by roughly 1~2%. Regrading the robustness of models using two sets of features, even though more features leads to larger variance, both of them have small variance, 4.896142e-06 for using the original features and 0.0001312791 for using additional PC features.
+
+##4. Diagnostics for the other sampling method
+
+For this part, we focus on analyzing the random forest model containing 10 trees, with 7 sampled features and minimal node size of 50 in each tree. Cross-validation gave these optimal hyperparameters.
+  
+## (a) Robustness of random forest model
+```{r}
+bin_comb <- rbind.data.frame(bin_train, bin_val)
+sizes <- round(nrow(bin_comb)*0.1*(1:10))
+
+size_test_acc <- c()
+for (s in sizes) {
+  size_train <- bin_comb[c(1:s), ]
+  size_rf <- randomForest(size_train[, -1], factor(size_train[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+  pred <- predict(size_rf, bin_test[, -1])
+  size_test_acc <- c(size_test_acc, sum(pred == bin_test$label) / nrow(bin_test))
+}
+
+plot(x = sizes, y = size_test_acc, type="l",
+     xlab = "training size",
+     ylab = "test accuracy of random forest")
+title("Random Forest: Test accuracy VS training size.")
+```
+
+### The testing accuracy converges after choosing more than 17,000 samples, so we bootstrapped 17,000 samples 100 times to see how robust the random forest model is.
+```{r}
+boot_acc_list <- c()
+for (i in 1:100) {
+  sample_indices <- sample(1:nrow(bin_comb), size = 150000, replace = FALSE)
+  sample_training <- bin_comb[sample_indices, ]
+  boot_rf <- randomForest(sample_training[, -1], factor(sample_training[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+  pred <- predict(boot_rf, bin_test[, -1])
+  boot_acc_list <- c(boot_acc_list, sum(pred == bin_test$label) / nrow(bin_test))
+}
+
+plot(x = 1:100, y = boot_acc_list, type="l",
+     xlab = "Subset",
+     ylab = "test accuracy of random forest")
+abline(h = mean(boot_acc_list), col="red")
+title("Random Forest: Test accuracy VS bootstrapped training subsets.")
+summary(boot_acc_list)
+var(boot_acc_list)
+```
+#### Comment: The testing accuracy of bootstrapping has small variance, which implies that the model is robust to the training samples.
+
+
+## (b) Patterns of misclassification
+```{r}
+rf.model <-randomForest(bin_comb[, -1], factor(bin_comb[, 1]), mtry = 7, nodesize = 50 , ntree = 10)
+pred <- predict(rf.model, bin_test[, -1])
+wrong_class_indices <- (1:nrow(bin_test))[pred != bin_test[, 1]]
+wrong_class <- bin_test[wrong_class_indices, ]
+correct_class <- bin_test[-wrong_class_indices, ]
+```
+
+### Confusion matrix
+```{r}
+confusionMatrix(factor(pred), factor(bin_test[, 1]))
+```
+
+#### Comment: The model misclassified around 9% of the "not cloud" samples and around 7% of the "cloud" samples.
+
+```{r}
+bin_test_wrong_indicate <- bin_test %>% mutate(is_wrong = pred != bin_test[, 1])
+NDAI.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(NDAI, fill = is_wrong), alpha = 0.5)
+
+SD.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(log(SD + 1), fill = is_wrong), alpha = 0.5)
+
+CORR.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(CORR, fill = is_wrong), alpha = 0.5)
+
+DF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(DF, fill = is_wrong), alpha = 0.5)
+
+CF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(CF, fill = is_wrong), alpha = 0.5)
+
+BF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(BF, fill = is_wrong), alpha = 0.5)
+
+AF.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(AF, fill = is_wrong), alpha = 0.5)
+
+AN.plot <- ggplot(data = bin_test_wrong_indicate) +
+  geom_density(aes(AN, fill = is_wrong), alpha = 0.5)
+```
+
+```{r}
+ggarrange(NDAI.plot, SD.plot, CORR.plot, DF.plot, CF.plot, BF.plot, AF.plot, AN.plot, nrow = 4, ncol = 2)
+```
+
+```{r}
+summary(bin_test_wrong_indicate %>% filter(is_wrong == TRUE))
+```
+
+```{r}
+summary(bin_test_wrong_indicate %>% filter(is_wrong == FALSE))
